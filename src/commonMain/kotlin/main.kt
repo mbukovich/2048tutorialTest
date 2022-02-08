@@ -1,9 +1,16 @@
 import com.soywiz.klock.seconds
+import com.soywiz.korev.Key
+import com.soywiz.korev.KeyEvent
 import com.soywiz.korge.*
+import com.soywiz.korge.input.*
+import com.soywiz.korge.input.SwipeDirection
+import com.soywiz.korge.input.keys
+import com.soywiz.korge.input.onSwipe
 import com.soywiz.korge.tween.*
 import com.soywiz.korge.view.*
 import com.soywiz.korim.color.Colors
 import com.soywiz.korim.color.RGBA
+import com.soywiz.korim.font.BitmapFont
 import com.soywiz.korim.font.readBitmapFont
 import com.soywiz.korim.format.*
 import com.soywiz.korim.text.TextAlignment
@@ -12,22 +19,35 @@ import com.soywiz.korma.geom.Rectangle
 import com.soywiz.korma.geom.degrees
 import com.soywiz.korma.geom.vector.roundRect
 import com.soywiz.korma.interpolation.Easing
+import kotlin.properties.Delegates
+import kotlin.random.Random
+
+var cellSize: Double = 0.0
+var fieldSize: Double = 0.0
+var leftIndent: Double = 0.0
+var topIndent: Double = 0.0
+var font: BitmapFont by Delegates.notNull()
+
+// Variables for keeping track of blocks and their positions in the game
+var map = PositionMap()
+val blocks = mutableMapOf<Int, Block>()
+var freeId = 0
 
 suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = RGBA(253, 247, 240)) {
 	// Write code for game
 
 	// Import font
-	val font = resourcesVfs["clear_sans.fnt"].readBitmapFont()
+	font = resourcesVfs["clear_sans.fnt"].readBitmapFont()
 
 	// Import images
 	val restartImg = resourcesVfs["restart.png"].readBitmap()
 	val undoImg = resourcesVfs["undo.png"].readBitmap()
 
 	// Calculating sizes for views in the game
-	val cellSize = views.virtualWidth / 5.0
-	val fieldSize = 50 + 4 * cellSize
-	val leftIndent = (views.virtualWidth - fieldSize) / 2
-	val topIndent = 150.0
+	cellSize = views.virtualWidth / 5.0
+	fieldSize = 50 + 4 * cellSize
+	leftIndent = (views.virtualWidth - fieldSize) / 2
+	topIndent = 150.0
 
 	/*
 	BACKGROUND GRAPHICS FOR GAME
@@ -125,4 +145,58 @@ suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = 
 		alignTopToTopOf(restartBlock)
 		alignRightToLeftOf(restartBlock, 5.0)
 	}
+
+	generateBlock()
+
+	keys {
+		down {
+			when (it.key) {
+				Key.LEFT -> moveBlocksTo(Direction.LEFT)
+				Key.RIGHT -> moveBlocksTo(Direction.RIGHT)
+				Key.UP -> moveBlocksTo(Direction.TOP)
+				Key.DOWN -> moveBlocksTo(Direction.BOTTOM)
+				else -> Unit
+			}
+		}
+	}
+
+	onSwipe(20.0) {
+		when (it.direction) {
+			SwipeDirection.LEFT -> moveBlocksTo(Direction.LEFT)
+			SwipeDirection.RIGHT -> moveBlocksTo(Direction.RIGHT)
+			SwipeDirection.TOP -> moveBlocksTo(Direction.TOP)
+			SwipeDirection.BOTTOM -> moveBlocksTo(Direction.BOTTOM)
+		}
+	}
+}
+
+fun Stage.moveBlocksTo(direction: Direction) {
+	println(direction)
+	//TODO, implement this and calculate changes
+}
+
+fun Container.block(number: Number) = Block(number).addTo(this)
+
+// Functions that take a row or column integer and return the actual x or y coordinate within the container
+fun columnX(number: Int) = leftIndent + 10 + (cellSize + 10) * number
+
+fun rowY(number: Int) = topIndent + 10 + (cellSize + 10) * number
+
+// This function creates a new block with an id in the hashmap
+fun Container.createNewBlockWithId(id: Int, number: Number, position: Position) {
+	blocks[id] = block(number).position(columnX(position.x), rowY(position.y))
+}
+
+// This function creates a new block using the above function
+fun Container.createNewBlock(number: Number, position: Position): Int {
+	val id = freeId++
+	createNewBlockWithId(id, number, position)
+	return id
+}
+
+fun Container.generateBlock() {
+	val position = map.getRandomFreePosition() ?: return
+	val number = if (Random.nextDouble() < 0.9) Number.ZERO else Number.ONE
+	val newId = createNewBlock(number, position)
+	map[position.x, position.y] = newId
 }
