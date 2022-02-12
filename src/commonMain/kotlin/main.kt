@@ -1,6 +1,5 @@
 import com.soywiz.klock.seconds
 import com.soywiz.korev.Key
-import com.soywiz.korev.KeyEvent
 import com.soywiz.korge.*
 import com.soywiz.korge.animate.Animator
 import com.soywiz.korge.animate.animateSequence
@@ -10,6 +9,7 @@ import com.soywiz.korge.input.*
 import com.soywiz.korge.input.SwipeDirection
 import com.soywiz.korge.input.keys
 import com.soywiz.korge.input.onSwipe
+import com.soywiz.korge.service.storage.storage
 import com.soywiz.korge.tween.*
 import com.soywiz.korge.view.*
 import com.soywiz.korim.color.Colors
@@ -18,10 +18,10 @@ import com.soywiz.korim.font.BitmapFont
 import com.soywiz.korim.font.readBitmapFont
 import com.soywiz.korim.format.*
 import com.soywiz.korim.text.TextAlignment
+import com.soywiz.korio.async.ObservableProperty
 import com.soywiz.korio.async.launchImmediately
 import com.soywiz.korio.file.std.*
 import com.soywiz.korma.geom.Rectangle
-import com.soywiz.korma.geom.degrees
 import com.soywiz.korma.geom.vector.roundRect
 import com.soywiz.korma.interpolation.Easing
 import kotlin.properties.Delegates
@@ -36,20 +36,39 @@ var font: BitmapFont by Delegates.notNull()
 // Variables for keeping track of blocks and their positions in the game
 var map = PositionMap()
 val blocks = mutableMapOf<Int, Block>()
+var history: History by Delegates.notNull()
 var freeId = 0
 
 var isAnimationRunning = false
 var isGameOver = false
 
-suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = RGBA(253, 247, 240)) {
-	// Write code for game
+val score = ObservableProperty(0)
+val best = ObservableProperty(0)
 
+suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = RGBA(253, 247, 240)) {
 	// Import font
 	font = resourcesVfs["clear_sans.fnt"].readBitmapFont()
+
+	// setup storage
+	val storage = views.storage
+	best.update(storage.getOrNull("best")?.toInt() ?: 0)
+
+	// setup history
+	history = History(storage.getOrNull("history")) {
+		storage["history"] = it.toString()
+	}
 
 	// Import images
 	val restartImg = resourcesVfs["restart.png"].readBitmap()
 	val undoImg = resourcesVfs["undo.png"].readBitmap()
+
+	// Setup score observers
+	score.observe {
+		if (it > best.value) best.update(it)
+	}
+	best.observe {
+		storage["best"] = it.toString()
+	}
 
 	// Calculating sizes for views in the game
 	cellSize = views.virtualWidth / 5.0
@@ -112,21 +131,27 @@ suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = 
 		centerXOn(bgBest)
 		alignTopToTopOf(bgBest, 5.0)
 	}
-	text("0", cellSize * 0.5, Colors.WHITE, font) {
+	text(best.value.toString(), cellSize * 0.5, Colors.WHITE, font) {
 		setTextBounds(Rectangle(0.0, 0.0, bgBest.width, cellSize - 24.0))
 		alignment = TextAlignment.MIDDLE_CENTER
 		alignTopToTopOf(bgBest, 12.0)
 		centerXOn(bgBest)
+		best.observe {
+			text = it.toString()
+		}
 	}
 	text("SCORE", cellSize * 0.25, RGBA(239, 226,210), font) {
 		centerXOn(bgScore)
 		alignTopToTopOf(bgScore, 5.0)
 	}
-	text("0", cellSize * 0.5, Colors.WHITE, font) {
+	text(score.value.toString(), cellSize * 0.5, Colors.WHITE, font) {
 		setTextBounds(Rectangle(0.0, 0.0, bgScore.width, cellSize - 24.0))
 		alignment = TextAlignment.MIDDLE_CENTER
 		centerXOn(bgScore)
 		alignTopToTopOf(bgScore, 12.0)
+		score.observe {
+			text = it.toString()
+		}
 	}
 
 
@@ -156,9 +181,19 @@ suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = 
 		}
 		alignTopToTopOf(restartBlock)
 		alignRightToLeftOf(restartBlock, 5.0)
+
+		onClick {
+			this@Korge.restoreField(history.undo())
+		}
 	}
 
-	generateBlock()
+	// generateBlock()
+
+	if (!history.isEmpty()) {
+		restoreField(history.currentElement)
+	} else {
+		generateBlockAndSave()
+	}
 
 	keys {
 		down {
@@ -178,6 +213,24 @@ suspend fun main() = Korge(width = 480, height = 640, title = "2048", bgcolor = 
 			SwipeDirection.RIGHT -> moveBlocksTo(Direction.RIGHT)
 			SwipeDirection.TOP -> moveBlocksTo(Direction.TOP)
 			SwipeDirection.BOTTOM -> moveBlocksTo(Direction.BOTTOM)
+		}
+	}
+}
+
+fun Container.restoreField(history: History.Element) {
+	map.forEach { if (it != -1) deleteBlock(it) }
+	map = PositionMap()
+	score.update(history.score)
+	freeId = 0
+	val numbers = history.numberIds.map {
+		if (it >= 0 && it < Number.values().size)
+			Number.values()[it]
+		else null
+	}
+	numbers.forEachIndexed { i, number ->
+		if (number != null) {
+			val newId = createNewBlock(number, Position(i % 4, i / 4))
+			map[i % 4, i / 4] = newId
 		}
 	}
 }
@@ -209,8 +262,15 @@ fun Stage.moveBlocksTo(direction: Direction) {
 		showAnimation(moves, merges) {
 			// when animation ends
 			map = newMap
-			generateBlock()
+			generateBlockAndSave()
 			isAnimationRunning = false
+
+			// updating the score on merge
+			var points = 0
+			merges.forEach {
+				points += numberFor(it.first).value
+			}
+			score.update(score.value + points)
 		}
 	}
 }
@@ -324,7 +384,9 @@ fun Container.restart() {
 	map = PositionMap()
 	blocks.values.forEach { it.removeFromParent() }
 	blocks.clear()
-	generateBlock()
+	score.update(0)
+	history.clear()
+	generateBlockAndSave()
 }
 
 fun Container.showGameOver(onRestart: () -> Unit) = container {
@@ -384,9 +446,10 @@ fun Container.createNewBlock(number: Number, position: Position): Int {
 	return id
 }
 
-fun Container.generateBlock() {
+fun Container.generateBlockAndSave() {
 	val position = map.getRandomFreePosition() ?: return
 	val number = if (Random.nextDouble() < 0.9) Number.ZERO else Number.ONE
 	val newId = createNewBlock(number, position)
 	map[position.x, position.y] = newId
+	history.add(map.toNumberIds(), score.value)
 }

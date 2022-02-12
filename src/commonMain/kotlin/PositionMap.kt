@@ -51,6 +51,8 @@ class PositionMap(private val array: IntArray2 = IntArray2(4, 4, -1)) {
 
     fun copy() = PositionMap(array.copy(data = array.data.copyOf()))
 
+    fun toNumberIds() = IntArray(16) { getNumber(it % 4, it / 4) }
+
     fun getNotEmptyPositionFrom(direction: Direction, line: Int): Position? {
         when (direction) {
             Direction.LEFT -> for (i in 0..3) getOrNull(i, line)?.let {return it}
